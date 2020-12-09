@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express'
 import cors from 'cors'
 import got from 'got'
+import dns from 'dns'
 
 const app = express()
 const URL = process.env.URL || 'localhost:3000'
@@ -8,6 +9,17 @@ const URL = process.env.URL || 'localhost:3000'
 app.use(cors())
 
 const cache = new Map()
+
+const ITALIA_IT_IP = '5.175.52.19'
+
+const overrideItaliaBackup = (
+  hostname: string,
+  family: number,
+  cb: (err: Error, address: string, family: number) => void,
+) => {
+  if (hostname === 'italia.it') return cb(null, ITALIA_IT_IP, 4)
+  return dns.lookup(hostname, family, cb)
+}
 
 const FOOTERS = {
   it: `
@@ -24,20 +36,25 @@ const FOOTERS = {
     <p>Aside from this footer (which sucks design-wise intentionally, and also I cannot do design, sry) it should be identical to the official one.</p>
     <p>Its only purpose it to pretend that the main domain of our country has one of the most basic security features of the internets.</p>
   </div>`,
+  github: `
+    <a href="https://github.com/lucamattiazzi/itaila.it" style="position: absolute; top: 0; right: 0; z-index:9999">
+      <img loading="lazy" width="149" height="149" src="https://github.blog/wp-content/uploads/2008/12/forkme_right_orange_ff7600.png?resize=149%2C149" alt="Fork me on GitHub" data-recalc-dims="1">
+    </a>
+  `,
 }
 
 function proxyItalia(req: Request, res: Response) {
   const url = `http://italia.it/${req.path}`
   const cached = cache.get(req.path)
   if (cached) return res.end(cached)
-  got.get(url).then((response) => {
+  got.get(url, { lookup: overrideItaliaBackup as any }).then((response) => {
     const contentType = response.headers['content-type']
     if (!contentType.startsWith('text')) return res.end(response.rawBody)
     const text = response.body.replace(/italia\.it/g, URL).replace(/http:\/\//g, '//')
     cache.set(req.path, text)
     if (!contentType.startsWith('text/html')) return res.end(text)
     const footer = req.path.startsWith('/it') ? FOOTERS.it : FOOTERS.en
-    const htmlWithFooter = `${text}${footer}`
+    const htmlWithFooter = `${text}${footer}${FOOTERS.github}`
     cache.set(req.path, htmlWithFooter)
     res.end(htmlWithFooter)
   })
