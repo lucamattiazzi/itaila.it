@@ -1,4 +1,5 @@
 import express, { Request, Response } from 'express'
+import { JSDOM } from 'jsdom'
 import cors from 'cors'
 import got from 'got'
 import dns from 'dns'
@@ -43,24 +44,57 @@ const FOOTERS = {
     <img loading="lazy" width="149" height="149" src="https://github.blog/wp-content/uploads/2008/12/forkme_left_orange_ff7600.png?resize=149%2C149" alt="Fork me on GitHub" data-recalc-dims="1">
   </a>
   `,
-}
+} as const
+
+const METADATA = {
+  DESCRIPTION: {
+    it:
+      "Sito NON ufficiale (una copia appena più sicura dell'ufficiale) del turismo in Italia: vacanze, arte e cultura, storia, gastronomia, artigianato, eventi, natura, laghi,montagna, golf, sci, nautica, terme, sport e avventura",
+    en:
+      'Italian tourism UNofficial (a copy, slightly safer than the official one) website: vacations, art and culture, history, events, nature, lakes, mountains, golf, sci, boating, thermal spas, sports and adventure',
+  },
+  TITLE: {
+    it: "Sito NON ufficiale (una copia appena più sicura dell'ufficiale) del turismo in Italia",
+    en: 'Italian Tourism UNOfficial (a copy, slightly safer than the official one) Website',
+  },
+} as const
 
 function proxyItalia(req: Request, res: Response) {
   const url = `http://italia.it/${req.path}`
   const cached = cache.get(req.path)
   if (cached) return res.end(cached)
-  got.get(url, { lookup: overrideItaliaBackup as any }).then((response) => {
-    const contentType = response.headers['content-type']
-    res.setHeader('content-type', contentType)
-    if (!contentType.startsWith('text')) return res.end(response.rawBody)
-    const text = response.body.replace(/italia\.it/g, URL).replace(/http:\/\//g, '//')
-    cache.set(req.path, text)
-    if (!contentType.startsWith('text/html')) return res.end(text)
-    const footer = req.path.startsWith('/it') ? FOOTERS.it : FOOTERS.en
-    const htmlWithFooter = `${text}${footer}${FOOTERS.github}`
-    cache.set(req.path, htmlWithFooter)
-    res.end(htmlWithFooter)
-  })
+  got
+    .get(url, { lookup: overrideItaliaBackup as any })
+    .then((response) => {
+      const contentType = response.headers['content-type']
+      res.setHeader('content-type', contentType)
+      if (!contentType.startsWith('text')) return res.end(response.rawBody)
+      const text = response.body.replace(/italia\.it/g, URL).replace(/http:\/\//g, '//')
+      cache.set(req.path, text)
+      if (!contentType.startsWith('text/html')) return res.end(text)
+      const lang = req.path.startsWith('/it') ? 'it' : 'en'
+      const footer = FOOTERS[lang]
+      const title = METADATA.TITLE[lang]
+      const description = METADATA.DESCRIPTION[lang]
+      const dom = new JSDOM(text)
+      try {
+        dom.window.document.getElementsByTagName('title')[0].text = title
+        dom.window.document.head
+          .querySelector('meta[name="DESCRIPTION"]')
+          .setAttribute('content', description)
+      } catch (err) {
+        console.error('err', err)
+      }
+      const serialized = dom.serialize()
+
+      const htmlWithFooter = `${serialized}${footer}${FOOTERS.github}`
+      cache.set(req.path, htmlWithFooter)
+      res.end(htmlWithFooter)
+    })
+    .catch((err) => {
+      console.error(err)
+      res.sendStatus(400)
+    })
 }
 
 app.use(proxyItalia)
